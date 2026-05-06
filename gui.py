@@ -225,6 +225,11 @@ class VideoAnalyserGUI(QMainWindow):
         self.api_input.setText(self.api_key)
         side_layout.addWidget(self.api_input)
 
+        self.btn_save_key = QPushButton("💾 保存配置到本地")
+        self.btn_save_key.clicked.connect(self.save_api_key)
+        self.btn_save_key.setStyleSheet("background-color: #333333; font-size: 11px;")
+        side_layout.addWidget(self.btn_save_key)
+
         # 模型选择
         side_layout.addWidget(QLabel("Gemini 模型"))
         self.model_combo = QComboBox()
@@ -338,6 +343,21 @@ class VideoAnalyserGUI(QMainWindow):
             self.status_msg.setText("准备就绪")
         except Exception as e:
             self.status_msg.setText(f"加载失败: {str(e)}")
+
+    def save_api_key(self):
+        new_key = self.api_input.text().strip()
+        if not new_key:
+            self.status_msg.setText("❌ 请输入有效的 Key")
+            return
+        
+        try:
+            with open(".env", "w", encoding="utf-8") as f:
+                f.write(f"GOOGLE_API_KEY={new_key}\n")
+            self.status_msg.setText("✅ API Key 已保存到本地 .env")
+            # 更新当前内存中的环境变量
+            os.environ["GOOGLE_API_KEY"] = new_key
+        except Exception as e:
+            self.status_msg.setText(f"❌ 保存失败: {str(e)}")
 
     def start_analysis(self):
         api_key = self.api_input.text().strip()
