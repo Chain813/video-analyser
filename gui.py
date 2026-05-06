@@ -1,0 +1,434 @@
+# -*- coding: utf-8 -*-
+"""
+视频操作分析器 - 专业桌面 GUI
+============================
+基于 PySide6 构建的现代深色模式界面。
+集成异步分析、视频预览、拖拽上传及结构化结果展示。
+"""
+
+import sys
+import os
+import json
+import threading
+from datetime import datetime
+
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QFileDialog, QScrollArea, QFrame,
+    QLineEdit, QComboBox, QProgressBar, QTextEdit, QSizePolicy
+)
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QFont, QIcon, QColor, QPalette, QDragEnterEvent, QDropEvent
+
+from ai_analyzer import analyze_video, format_result_text
+from video_processor import get_video_info, format_timestamp
+
+# ---------------------------------------------------------------------------
+# QSS 样式表 (Premium Dark Theme)
+# ---------------------------------------------------------------------------
+STYLE_SHEET = """
+QMainWindow {
+    background-color: #121212;
+}
+
+QWidget {
+    color: #E0E0E0;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei";
+}
+
+QFrame#Sidebar {
+    background-color: #1E1E1E;
+    border-right: 1px solid #333333;
+}
+
+QFrame#MainContent {
+    background-color: #121212;
+}
+
+QPushButton#PrimaryButton {
+    background-color: #0078D4;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+QPushButton#PrimaryButton:hover {
+    background-color: #0086F0;
+}
+
+QPushButton#PrimaryButton:disabled {
+    background-color: #333333;
+    color: #888888;
+}
+
+QLineEdit, QComboBox {
+    background-color: #2D2D2D;
+    border: 1px solid #444444;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+QScrollArea {
+    border: none;
+    background-color: transparent;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: #1E1E1E;
+    width: 8px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #444444;
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QFrame#StepCard {
+    background-color: #1E1E1E;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    margin-bottom: 10px;
+}
+
+QLabel#StepHeader {
+    color: #0078D4;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+QLabel#DropZone {
+    border: 2px dashed #444444;
+    border-radius: 10px;
+    color: #888888;
+    font-size: 16px;
+}
+
+QLabel#Title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #FFFFFF;
+}
+"""
+
+# ---------------------------------------------------------------------------
+# 异步分析线程
+# ---------------------------------------------------------------------------
+
+class AnalysisWorker(QThread):
+    finished = Signal(dict)
+    error = Signal(str)
+    progress = Signal(str)
+
+    def __init__(self, video_path, api_key, model):
+        super().__init__()
+        self.video_path = video_path
+        self.api_key = api_key
+        self.model = model
+
+    def run(self):
+        try:
+            self.progress.emit("正在连接 Gemini 服务...")
+            result = analyze_video(self.video_path, self.api_key, self.model)
+            self.finished.emit(result)
+        except Exception as e:
+            self.error.emit(str(e))
+
+# ---------------------------------------------------------------------------
+# UI 组件：操作步骤卡片
+# ---------------------------------------------------------------------------
+
+class StepCard(QFrame):
+    def __init__(self, step_data):
+        super().__init__()
+        self.setObjectName("StepCard")
+        layout = QVBoxLayout(self)
+
+        # 头部：时间戳 + 动作类型
+        header_layout = QHBoxLayout()
+        ts = step_data.get("timestamp", "00:00")
+        action = step_data.get("action_type", "操作")
+        target = step_data.get("target_object", "")
+
+        header_label = QLabel(f"[{ts}] {action}")
+        header_label.setObjectName("StepHeader")
+        header_layout.addWidget(header_label)
+
+        if target:
+            target_label = QLabel(f"➔ {target}")
+            target_label.setStyleSheet("color: #AAAAAA; font-style: italic;")
+            header_layout.addWidget(target_label)
+        
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
+
+        # 内容：详细描述
+        detail_label = QLabel(step_data.get("detail", ""))
+        detail_label.setWordWrap(True)
+        detail_label.setStyleSheet("color: #E0E0E0; font-size: 13px;")
+        layout.addWidget(detail_label)
+
+        # 视觉反馈
+        visual = step_data.get("visual_change", "")
+        if visual:
+            v_label = QLabel(f"💡 反馈: {visual}")
+            v_label.setStyleSheet("color: #00A36C; font-size: 12px;")
+            v_label.setWordWrap(True)
+            layout.addWidget(v_label)
+
+# ---------------------------------------------------------------------------
+# 主窗口
+# ---------------------------------------------------------------------------
+
+class VideoAnalyserGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("AI 视频操作步骤提取器 v2.0")
+        self.setMinimumSize(1100, 750)
+        self.setStyleSheet(STYLE_SHEET)
+        self.setAcceptDrops(True)
+
+        self.current_video = None
+        self.api_key = os.environ.get("GOOGLE_API_KEY", "")
+
+        self.init_ui()
+
+    def init_ui(self):
+        # 主布局
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # ---------------- 侧边栏 (配置区) ----------------
+        sidebar = QFrame()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(280)
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(20, 20, 20, 20)
+        side_layout.setSpacing(15)
+
+        title = QLabel("Zenith 分析引擎")
+        title.setObjectName("Title")
+        side_layout.addWidget(title)
+
+        # API Key 设置
+        side_layout.addWidget(QLabel("Google AI API Key"))
+        self.api_input = QLineEdit()
+        self.api_input.setEchoMode(QLineEdit.Password)
+        self.api_input.setPlaceholderText("在此输入 API Key...")
+        self.api_input.setText(self.api_key)
+        side_layout.addWidget(self.api_input)
+
+        # 模型选择
+        side_layout.addWidget(QLabel("Gemini 模型"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["gemini-2.0-flash", "gemini-2.0-pro"])
+        side_layout.addWidget(self.model_combo)
+
+        side_layout.addStretch()
+
+        # 状态统计
+        self.stats_label = QLabel("准备就绪")
+        self.stats_label.setStyleSheet("color: #888888; font-size: 12px;")
+        side_layout.addWidget(self.stats_label)
+
+        main_layout.addWidget(sidebar)
+
+        # ---------------- 内容区 (操作与结果) ----------------
+        content_frame = QFrame()
+        content_frame.setObjectName("MainContent")
+        content_layout = QHBoxLayout(content_frame)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setSpacing(20)
+
+        # 左侧：视频上传与预览
+        left_column = QVBoxLayout()
+        
+        self.drop_zone = QLabel("拖拽视频文件到此处\n或点击下方选择文件")
+        self.drop_zone.setObjectName("DropZone")
+        self.drop_zone.setAlignment(Qt.AlignCenter)
+        self.drop_zone.setMinimumHeight(300)
+        self.drop_zone.setWordWrap(True)
+        left_column.addWidget(self.drop_zone)
+
+        self.btn_select = QPushButton("选择视频文件")
+        self.btn_select.clicked.connect(self.select_video)
+        left_column.addWidget(self.btn_select)
+
+        left_column.addSpacing(20)
+
+        self.btn_analyze = QPushButton("🚀 开始 AI 分析")
+        self.btn_analyze.setObjectName("PrimaryButton")
+        self.btn_analyze.setEnabled(False)
+        self.btn_analyze.clicked.connect(self.start_analysis)
+        left_column.addWidget(self.btn_analyze)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(4)
+        left_column.addWidget(self.progress_bar)
+
+        self.status_msg = QLabel("")
+        self.status_msg.setStyleSheet("color: #0078D4;")
+        left_column.addWidget(self.status_msg)
+
+        left_column.addStretch()
+        content_layout.addLayout(left_column, 2)
+
+        # 右侧：分析结果
+        right_column = QVBoxLayout()
+        right_column.addWidget(QLabel("📖 提取结果"))
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.results_container = QWidget()
+        self.results_layout = QVBoxLayout(self.results_container)
+        self.results_layout.setAlignment(Qt.AlignTop)
+        self.scroll_area.setWidget(self.results_container)
+        right_column.addWidget(self.scroll_area)
+
+        # 导出按钮
+        self.btn_export = QPushButton("导出为文本...")
+        self.btn_export.setEnabled(False)
+        self.btn_export.clicked.connect(self.export_results)
+        right_column.addWidget(self.btn_export)
+
+        content_layout.addLayout(right_column, 3)
+
+        main_layout.addWidget(content_frame)
+
+    # ---------------- 业务逻辑 ----------------
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent):
+        files = [u.toLocalFile() for u in event.mimeData().urls()]
+        if files:
+            self.load_video(files[0])
+
+    def select_video(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择视频文件", "", "视频文件 (*.mp4 *.avi *.mkv *.mov)"
+        )
+        if file_path:
+            self.load_video(file_path)
+
+    def load_video(self, file_path):
+        try:
+            info = get_video_info(file_path)
+            self.current_video = file_path
+            duration = format_timestamp(info["duration_sec"])
+            self.drop_zone.setText(
+                f"已选择: {os.path.basename(file_path)}\n"
+                f"时长: {duration} | 分辨率: {info['width']}x{info['height']}"
+            )
+            self.drop_zone.setStyleSheet("border: 2px solid #0078D4; color: #E0E0E0;")
+            self.btn_analyze.setEnabled(True)
+            self.status_msg.setText("准备就绪")
+        except Exception as e:
+            self.status_msg.setText(f"加载失败: {str(e)}")
+
+    def start_analysis(self):
+        api_key = self.api_input.text().strip()
+        if not api_key:
+            self.status_msg.setText("❌ 请先输入 API Key")
+            return
+
+        self.set_ui_state(False)
+        self.clear_results()
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setRange(0, 0) # 无限循环进度
+
+        self.worker = AnalysisWorker(
+            self.current_video, api_key, self.model_combo.currentText()
+        )
+        self.worker.progress.connect(lambda m: self.status_msg.setText(m))
+        self.worker.error.connect(self.on_analysis_error)
+        self.worker.finished.connect(self.on_analysis_finished)
+        self.worker.start()
+
+    def on_analysis_error(self, err_msg):
+        self.set_ui_state(True)
+        self.status_msg.setText(f"❌ 分析出错: {err_msg}")
+        self.progress_bar.setVisible(False)
+
+    def on_analysis_finished(self, result):
+        self.set_ui_state(True)
+        self.progress_bar.setVisible(False)
+        self.status_msg.setText("✅ 分析完成")
+        self.last_result = result
+        self.render_results(result)
+        self.btn_export.setEnabled(True)
+
+    def clear_results(self):
+        for i in reversed(range(self.results_layout.count())): 
+            self.results_layout.itemAt(i).widget().setParent(None)
+
+    def render_results(self, result):
+        # 添加摘要卡片
+        if result.get("summary"):
+            summary_box = QFrame()
+            summary_box.setStyleSheet("background-color: #2D2D2D; border-radius: 8px; padding: 10px;")
+            sum_layout = QVBoxLayout(summary_box)
+            sum_title = QLabel("📋 视频摘要")
+            sum_title.setStyleSheet("font-weight: bold; color: #FFFFFF;")
+            sum_content = QLabel(result["summary"])
+            sum_content.setWordWrap(True)
+            sum_layout.addWidget(sum_title)
+            sum_layout.addWidget(sum_content)
+            self.results_layout.addWidget(summary_box)
+
+        # 添加步骤
+        for step in result.get("steps", []):
+            card = StepCard(step)
+            self.results_layout.addWidget(card)
+        
+        # 添加技巧
+        tips = result.get("tips", [])
+        if tips:
+            tips_box = QFrame()
+            tips_box.setStyleSheet("background-color: #1A2A1A; border: 1px solid #2A4A2A; border-radius: 8px; margin-top: 10px;")
+            tips_layout = QVBoxLayout(tips_box)
+            tips_layout.addWidget(QLabel("💡 专家建议 & 技巧"))
+            for t in tips:
+                t_label = QLabel(f"• {t}")
+                t_label.setWordWrap(True)
+                tips_layout.addWidget(t_label)
+            self.results_layout.addWidget(tips_box)
+
+    def set_ui_state(self, enabled):
+        self.btn_analyze.setEnabled(enabled)
+        self.btn_select.setEnabled(enabled)
+        self.api_input.setEnabled(enabled)
+        self.model_combo.setEnabled(enabled)
+
+    def export_results(self):
+        if not hasattr(self, 'last_result'): return
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "导出结果", "分析报告.txt", "文本文件 (*.txt)"
+        )
+        if file_path:
+            content = format_result_text(self.last_result)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            self.status_msg.setText(f"报告已保存至: {os.path.basename(file_path)}")
+
+def run_gui():
+    app = QApplication(sys.argv)
+    window = VideoAnalyserGUI()
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    run_gui()

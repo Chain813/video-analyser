@@ -32,6 +32,12 @@ if sys.stdout.encoding != 'utf-8':
 from video_processor import get_video_info, format_timestamp
 from ai_analyzer import analyze_video, format_result_text
 
+try:
+    from gui import run_gui
+    HAS_GUI = True
+except ImportError:
+    HAS_GUI = False
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -60,6 +66,17 @@ def main():
         help="指定 Gemini 模型（默认: gemini-2.0-flash）"
     )
     args = parser.parse_args()
+
+    # 如果没有提供视频路径且 GUI 可用，则启动 GUI
+    if not args.video and HAS_GUI:
+        print("启动图形化界面...")
+        run_gui()
+        return
+
+    # 如果没有提供视频路径且 GUI 不可用，则报错
+    if not args.video:
+        parser.print_help()
+        sys.exit(1)
 
     # ---- 前置检查 ----
 
