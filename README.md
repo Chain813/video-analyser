@@ -2,6 +2,8 @@
 
 基于 Google Gemini 大模型的命令行工具，自动分析视频（软件操作教程、流程演示等），提取出结构化、详细的操作步骤说明。
 
+[English Version](README_EN.md)
+
 ## ✨ 核心特性
 
 - **结构化 JSON 输出** — 借鉴 [Gemini Cookbook](https://github.com/google-gemini/cookbook) 官方推荐方案，使用 `response_schema` 强制模型返回标准 JSON，100% 可解析。
