@@ -1,148 +1,107 @@
 # AI 视频操作步骤提取器
 
-基于 Google Gemini 大模型的命令行工具，自动分析视频（软件操作教程、流程演示等），提取出结构化、详细的操作步骤说明。
+基于 Google Gemini 大模型的桌面工具，自动分析视频（软件操作教程、流程演示等），提取出结构化、详细的操作步骤说明。
 
 [English Version](README_EN.md)
 
 ## ✨ 核心特性
 
-- **结构化 JSON 输出** — 借鉴 [Gemini Cookbook](https://github.com/google-gemini/cookbook) 官方推荐方案，使用 `response_schema` 强制模型返回标准 JSON，100% 可解析。
-- **原子化动作提取** — 受 [VideoInstruct](https://github.com/PouriaRouzrokh/VideoInstruct) 启发，每个步骤只包含一个核心动作，附带动作类型、操作对象和视觉反馈。
-- **多维度分析** — 不仅提取步骤，还自动识别视频中使用的软件/工具，并萃取隐含的技巧与注意事项。
-- **灵活的输出格式** — 支持人类可读的文本报告和原始 JSON 两种模式。
+- **结构化 JSON 输出** — 使用 Gemini `response_schema` 强制模型返回标准 JSON，100% 可解析。
+- **原子化动作提取** — 每个步骤只包含一个核心动作，附带动作类型、操作对象和视觉反馈。
+- **关键帧自动截取** — 根据步骤时间戳，自动从视频中截取对应画面，生成图文并茂的报告。
+- **多格式导出** — 支持 TXT 纯文本、Markdown 图文报告、JSON 数据三种格式。
+- **专业桌面 GUI** — 基于 PySide6 的深色模式界面，支持拖拽上传、实时预览、一键导出。
+- **CLI 命令行模式** — 同时保留完整的命令行工具，适合批量处理和脚本集成。
 
 ## 📋 环境要求
 
 - Python 3.8+
-- 有效的 [Google AI API Key](https://aistudio.google.com/apikey)（支持 Gemini 多模态模型）
+- 有效的 [Google AI API Key](https://aistudio.google.com/apikey)
 
 ## 🚀 安装步骤
 
 ```bash
-# 1. 克隆或下载本项目
-# 2. 安装依赖
 pip install -r requirements.txt
 ```
 
 **依赖说明：**
 | 包名 | 用途 |
 |---|---|
-| `google-genai` | Google 官方 Gemini SDK，负责视频上传与多模态分析 |
-| `opencv-python` | 提取视频元信息（时长、分辨率、帧率、编码格式） |
-| `pydantic` | 数据校验框架（预留扩展用） |
+| `google-genai` | Google 官方 Gemini SDK |
+| `opencv-python` | 视频元信息提取与关键帧截取 |
+| `PySide6` | 专业桌面 GUI 框架 |
+| `pydantic` | 数据校验 (预留) |
+| `python-dotenv` | 环境变量管理 |
 
 ## ⚙️ 配置 API Key
 
-**方式一：环境变量（推荐）**
-```powershell
-# PowerShell
-$env:GOOGLE_API_KEY="您的_API_KEY"
-```
+**方式一：GUI 界面保存 (推荐)**
+
+启动程序后在侧边栏输入 Key 并点击 "Save Config"，程序会自动生成 `.env` 文件。
+
+**方式二：手动创建 `.env` 文件**
 ```bash
-# Linux / macOS
-export GOOGLE_API_KEY="您的_API_KEY"
+GOOGLE_API_KEY=your_api_key_here
 ```
 
-**方式二：命令行参数**
+**方式三：命令行参数**
 ```bash
-python main.py video.mp4 --api-key "您的_API_KEY"
+python main.py video.mp4 --api-key "your_key"
 ```
 
 ## 📖 使用说明
 
+### GUI 模式 (默认)
 ```bash
-python main.py <视频路径> [选项]
+python main.py
 ```
+或直接双击 `run_app.bat`。
 
-### 可用选项
-
-| 选项 | 说明 |
-|---|---|
-| `-o`, `--output` | 输出文件路径（不指定则打印到终端） |
-| `--json` | 输出原始 JSON 格式（默认输出人类可读文本） |
-| `--api-key` | 直接传入 Google AI API Key |
-| `--model` | 指定模型（默认 `gemini-2.0-flash`） |
-
-### 使用示例
-
+### CLI 模式
 ```bash
-# 基本分析 → 终端显示
+# 终端输出文本报告
 python main.py tutorial.mp4
 
-# 保存为文本报告
-python main.py tutorial.mp4 -o report.txt
+# 保存为 Markdown 图文报告 (自动截取关键帧)
+python main.py tutorial.mp4 -o report.md --md
 
-# 导出结构化 JSON（适合程序化处理）
+# 导出结构化 JSON
 python main.py tutorial.mp4 -o data.json --json
 
-# 使用更强大的模型获取更高精度
+# 指定模型
 python main.py tutorial.mp4 --model gemini-2.5-pro -o report.txt
-```
-
-### 输出示例
-
-**文本模式** (`python main.py video.mp4`)：
-```
-📋 视频概述
-   本视频演示了如何在 ArcGIS Pro 中创建缓冲区分析
-
-🛠️  涉及工具
-   ArcGIS Pro, Spatial Analyst
-
-📝 操作步骤 (共 5 步)
-────────────────────────────────────────────────────────────
-[00:03] 步骤 1 (双击) → ArcGIS Pro 图标
-       在桌面双击 ArcGIS Pro 快捷方式启动应用程序
-       💡 变化: 软件启动界面出现，显示最近项目列表
-
-[00:15] 步骤 2 (点击) → 新建地图按钮
-       在起始页中点击"Map"创建一个新的空白地图项目
-       💡 变化: 地图视图打开，显示默认的世界底图
-...
-
-💡 技巧与注意事项
-   1. 缓冲区半径建议使用投影坐标系的米为单位
-   2. 分析前请确认数据的坐标系一致性
-```
-
-**JSON 模式** (`python main.py video.mp4 --json`)：
-```json
-{
-  "summary": "本视频演示了如何在 ArcGIS Pro 中创建缓冲区分析",
-  "software_or_tools": ["ArcGIS Pro", "Spatial Analyst"],
-  "steps": [
-    {
-      "step_id": 1,
-      "timestamp": "00:03",
-      "action_type": "双击",
-      "target_object": "ArcGIS Pro 图标",
-      "detail": "在桌面双击 ArcGIS Pro 快捷方式启动应用程序",
-      "visual_change": "软件启动界面出现，显示最近项目列表"
-    }
-  ],
-  "tips": ["缓冲区半径建议使用投影坐标系的米为单位"]
-}
 ```
 
 ## 📁 项目结构
 
 ```
-P2/
-├── main.py              # CLI 主入口：参数解析、流程编排、结果输出
-├── ai_analyzer.py       # AI 核心：Prompt 工程、JSON Schema、Gemini API 调用
-├── video_processor.py   # 视频处理：OpenCV 元信息提取
-├── requirements.txt     # Python 依赖
-└── README.md            # 本文件
+video-analyser/
+├── src/                          # 核心源代码
+│   ├── analyzer/                 # AI 分析引擎
+│   │   ├── engine.py             #   Gemini API 交互与结构化分析
+│   │   └── prompts.py            #   Prompt 模板与 JSON Schema
+│   ├── utils/                    # 工具函数
+│   │   ├── video.py              #   视频元信息 & 关键帧截取
+│   │   └── export.py             #   多格式导出 (TXT/MD/JSON)
+│   └── ui/                       # 图形界面
+│       ├── main_window.py        #   主窗口 (PySide6)
+│       └── styles.py             #   QSS 深色主题样式表
+├── main.py                       # 统一入口 (GUI/CLI)
+├── run_app.bat                   # 一键启动脚本
+├── build_exe.bat                 # 一键打包脚本
+├── .env.example                  # 环境变量模板
+├── .gitignore                    # Git 忽略规则
+├── requirements.txt              # 依赖列表
+├── README.md                     # 中文文档
+└── README_EN.md                  # 英文文档
 ```
 
-## 🙏 致谢与技术参考
-
-本项目的设计借鉴了以下优秀的开源工作：
+## 🙏 致谢
 
 | 项目 | 借鉴内容 |
 |---|---|
-| [PouriaRouzrokh/VideoInstruct](https://github.com/PouriaRouzrokh/VideoInstruct) | "指令推理"型 Prompt 设计、动作原子化方法论 |
-| [google-gemini/cookbook](https://github.com/google-gemini/cookbook) | `response_schema` 结构化输出、长视频上下文缓存 |
-| [YahyaBagia/recipe-video-ai](https://github.com/YahyaBagia/recipe-video-ai) | 步骤 Schema 定义、工具/对象字段拆分 |
-| [OpenGVLab/VideoChat2](https://github.com/OpenGVLab/VideoChat2) | 时空推理、关键帧采样策略（未来扩展） |
-| [DAMO-NLP-SG/VideoLLaMA2](https://github.com/DAMO-NLP-SG/VideoLLaMA2) | 音视频多模态融合思路（未来扩展） |
+| [PouriaRouzrokh/VideoInstruct](https://github.com/PouriaRouzrokh/VideoInstruct) | 动作原子化方法论 |
+| [google-gemini/cookbook](https://github.com/google-gemini/cookbook) | 结构化输出方案 |
+| [YahyaBagia/recipe-video-ai](https://github.com/YahyaBagia/recipe-video-ai) | 步骤 Schema 设计 |
+| [OpenGVLab/VideoChat2](https://github.com/OpenGVLab/VideoChat2) | 时空推理策略 |
+| [DAMO-NLP-SG/VideoLLaMA2](https://github.com/DAMO-NLP-SG/VideoLLaMA2) | 多模态融合思路 |
